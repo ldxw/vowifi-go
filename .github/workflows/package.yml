@@ -1,0 +1,60 @@
+name: Package
+
+# 手动触发：校验构建并打 vX.Y.Z tag。
+# 说明：本仓库是 1239t/<模块> 的镜像（模块声明保持原路径，下游用 replace 引用）。
+# 上游依赖的 github.com/iniwex5/netlink 仓库已被删除，这里在构建时临时指向公开镜像，
+# 不写进 go.mod（库里的 replace 本来也不会被下游采用）。
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（不含 v，例如 1.2.0）'
+        required: true
+        default: '1.0.0'
+      push_tag:
+        description: '是否创建并推送 tag（true/false）'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: package
+  cancel-in-progress: false
+
+env:
+  GOFLAGS: -mod=mod
+
+jobs:
+  package:
+    name: 打包
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: 指向公开的 netlink 镜像
+        run: go mod edit -replace=github.com/iniwex5/netlink=github.com/ldxw/netlink@v1.0.1
+      - name: 校验模块
+        run: |
+          set -euo pipefail
+          go mod tidy
+          go build ./...
+          echo "校验通过"
+      - name: 打 tag 并推送
+        if: ${{ inputs.push_tag == 'true' }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+          TAG="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then echo "$TAG 已存在，跳过"; exit 0; fi
+          git tag -a "$TAG" -m "release $TAG（手动打包）"
+          git push origin "$TAG"
+          echo "已发布 $TAG"
